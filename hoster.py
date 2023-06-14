@@ -40,13 +40,17 @@ def signal_handler(sig, frame):
     sys.exit(0)
 
 
+def update_hosts(q):
+    all_hosts = {}
+    for key in redis_client.scan_iter("hoster:*"):
+        all_hosts[key[7:]] = json.loads(redis_client.get(key))
+    q.put(all_hosts)
+
+
 def listen_pub(p, q):
     for item in p.listen():
         if item['type'] == 'message':
-            all_hosts = {}
-            for key in redis_client.scan_iter("hoster:*"):
-                all_hosts[key[7:]] = json.loads(redis_client.get(key))
-            q.put(all_hosts)
+            update_hosts(q)
 
 
 def is_preferred_ip(ip):
@@ -136,19 +140,24 @@ def main():
 
     q = queue.Queue()
 
-    docker_client = docker.APIClient(base_url='unix://%s' % args.socket)
+    docker_client = docker.APIClient(base_url='unix://%s' % args.socket) if args.socket != 'none' else None
     # get running containers
-    for c in docker_client.containers(quiet=True, all=False):
-        container_id = c["Id"]
-        container = get_container_data(docker_client, container_id)
-        hosts[container_id] = container
+    if docker_client is not None:
+        for c in docker_client.containers(quiet=True, all=False):
+            container_id = c["Id"]
+            container = get_container_data(docker_client, container_id)
+            hosts[container_id] = container
 
-    update_hosts_file()
+        update_hosts_file()
+    else:
+        update_hosts(q)
 
     threads = [
         threading.Thread(target=listen_pub, args=(redis_pubsub, q)),
         threading.Thread(target=handle_queue, args=(q,)),
-        threading.Thread(target=listen_docker, args=(docker_client,))]
+    ]
+    if docker_client is not None:
+        threads.append(threading.Thread(target=listen_docker, args=(docker_client,)))
 
     for i in threads:
         i.start()

@@ -55,7 +55,7 @@ def refresh_docker_hosts_task(docker_client):
                 refresh_docker_hosts(docker_client)
             except:
                 pass
-            last_docker_update_time = datetime.now()
+
         time.sleep(300)
 
 
@@ -217,6 +217,8 @@ def get_container_data(docker_client, container_id):
 
 
 def update_hosts_file():
+    global last_docker_update_time
+    last_docker_update_time = datetime.now()
     item = {"ip": local_ip, "host": local_host, "hosts": hosts}
     redis_client.set("hoster:" + local_host, json.dumps(item))
     redis_client.publish(redis_channel, local_ip)

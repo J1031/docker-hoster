@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 import traceback
+from datetime import datetime
 
 import docker
 import redis
@@ -31,6 +32,31 @@ local_ip = get_local_ip()
 local_host = socket.getfqdn(socket.gethostname())
 redis_channel = "hoster"
 preferred_networks = []
+
+last_docker_update_time = datetime.now()
+
+
+def refresh_docker_hosts(docker_client):
+    for c in docker_client.containers(quiet=True, all=False):
+        container_id = c["Id"]
+        container = get_container_data(docker_client, container_id)
+        hosts[container_id] = container
+
+    update_hosts_file()
+
+
+def refresh_docker_hosts_task(docker_client):
+    global last_docker_update_time
+    while True:
+        duration = datetime.now() - last_docker_update_time
+        duration_in_s = duration.total_seconds()
+        if duration_in_s >= 3600:
+            try:
+                refresh_docker_hosts(docker_client)
+            except:
+                pass
+            last_docker_update_time = datetime.now()
+        time.sleep(300)
 
 
 def signal_handler(sig, frame):
@@ -143,12 +169,7 @@ def main():
     docker_client = docker.APIClient(base_url='unix://%s' % args.socket) if args.socket != 'none' else None
     # get running containers
     if docker_client is not None:
-        for c in docker_client.containers(quiet=True, all=False):
-            container_id = c["Id"]
-            container = get_container_data(docker_client, container_id)
-            hosts[container_id] = container
-
-        update_hosts_file()
+        refresh_docker_hosts(docker_client)
     else:
         update_hosts(q)
 
@@ -158,6 +179,7 @@ def main():
     ]
     if docker_client is not None:
         threads.append(threading.Thread(target=listen_docker, args=(docker_client,)))
+        threads.append(threading.Thread(target=refresh_docker_hosts_task, args=(docker_client,)))
 
     for i in threads:
         i.start()
